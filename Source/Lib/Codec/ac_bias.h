@@ -15,6 +15,9 @@
 extern "C" {
 #endif
 
+typedef uint32_t uint16x2_t;
+typedef uint64_t uint32x2_t;
+
 uint64_t svt_psy_distortion(const uint8_t* input, const uint32_t input_stride,
                             const uint8_t* recon, const uint32_t recon_stride,
                             const uint32_t width, const uint32_t height);

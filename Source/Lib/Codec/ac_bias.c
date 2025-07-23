@@ -21,21 +21,21 @@
 
 // in: a pseudo-simd number of the form x+(y<<EW)
 // return: abs(x)+(abs(y)<<16)
-static inline uint32_t abs2(const uint32_t a) {
-    const uint32_t mask = (a >> (BITS_PER_SUM - 1)) & (((uint32_t)1 << BITS_PER_SUM) + 1);
-    const uint32_t s = (mask << BITS_PER_SUM) - mask;
+static inline uint16x2_t abs2(const uint16x2_t a) {
+    const uint16x2_t mask = (a >> (BITS_PER_SUM - 1)) & (((uint16x2_t)1 << BITS_PER_SUM) + 1);
+    const uint16x2_t s = (mask << BITS_PER_SUM) - mask;
     return (a + s) ^ s;
 }
 
-static inline uint64_t abs2_hbd(const uint64_t a) {
-    const uint64_t mask = (a >> (BITS_PER_SUM_HBD - 1)) & (((uint64_t)1 << BITS_PER_SUM_HBD) + 1);
-    const uint64_t s = (mask << BITS_PER_SUM_HBD) - mask;
+static inline uint32x2_t abs2_hbd(const uint32x2_t a) {
+    const uint32x2_t mask = (a >> (BITS_PER_SUM_HBD - 1)) & (((uint32x2_t)1 << BITS_PER_SUM_HBD) + 1);
+    const uint32x2_t s = (mask << BITS_PER_SUM_HBD) - mask;
     return (a + s) ^ s;
 }
 
 static void svt_psy_hadamard_4x4_diff_c(uint32_t* a, uint32_t* b, uint32_t* c, uint32_t* d, uint32_t w, uint32_t x, uint32_t y, uint32_t z) {
-    const uint32_t s0 = w, s1 = x, s2 = y, s3 = z;
-    const uint32_t t0 = s0 + s1, t1 = s0 - s1, t2 = s2 + s3, t3 = s2 - s3;
+    const uint16x2_t s0 = w, s1 = x, s2 = y, s3 = z;
+    const uint16x2_t t0 = s0 + s1, t1 = s0 - s1, t2 = s2 + s3, t3 = s2 - s3;
     *a = t0 + t2;
     *b = t0 - t2;
     *c = t1 + t3;
@@ -54,10 +54,10 @@ static void svt_psy_hadamard_4x4_hbd_diff_c(uint64_t* a, uint64_t* b, uint64_t* 
 /*
  * 8-bit functions
  */
-static uint64_t svt_sa8d_8x8(const uint8_t* s, const uint32_t sp, const uint8_t* r, const uint32_t rp) {
-    uint32_t tmp[8][4];
-    uint32_t a0, a1, a2, a3, a4, a5, a6, a7, b0, b1, b2, b3;
-    uint32_t sum = 0;
+static uint64_t svt_psy_sa8d_8x8(const uint8_t* s, const uint32_t sp, const uint8_t* r, const uint32_t rp) {
+    uint16x2_t tmp[8][4];
+    uint16x2_t a0, a1, a2, a3, a4, a5, a6, a7, b0, b1, b2, b3;
+    uint16x2_t sum = 0;
 
     for (int i = 0; i < 8; i++, s += sp, r += rp) {
         a0 = s[0] - r[0];
@@ -88,9 +88,9 @@ static uint64_t svt_sa8d_8x8(const uint8_t* s, const uint32_t sp, const uint8_t*
 }
 
 static uint64_t svt_psy_satd_4x4(const uint8_t* s, const uint32_t sp, const uint8_t* r, const uint32_t rp) {
-    uint32_t tmp[4][2];
-    uint32_t a0, a1, a2, a3, b0, b1;
-    uint32_t sum = 0;
+    uint16x2_t tmp[4][2];
+    uint16x2_t a0, a1, a2, a3, b0, b1;
+    uint16x2_t sum = 0;
 
     for (int i = 0; i < 4; i++, s += sp, r += rp) {
         a0 = s[0] - r[0];
@@ -121,9 +121,9 @@ uint64_t svt_psy_distortion(const uint8_t* input, const uint32_t input_stride,
     if (width >= 8 && height >= 8) { /* >8x8 */
         for (uint64_t i = 0; i < height; i += 8)
             for (uint64_t j = 0; j < width; j += 8) {
-                const int32_t input_nrg = svt_sa8d_8x8(input + i * input_stride + j, input_stride, zero_buffer, 0) -
+                const int32_t input_nrg = svt_psy_sa8d_8x8(input + i * input_stride + j, input_stride, zero_buffer, 0) -
                     (svt_aom_sad8x8(input + i * input_stride + j, input_stride, zero_buffer, 0) >> 2);
-                const int32_t recon_nrg = svt_sa8d_8x8(recon + i * recon_stride + j, recon_stride, zero_buffer, 0) -
+                const int32_t recon_nrg = svt_psy_sa8d_8x8(recon + i * recon_stride + j, recon_stride, zero_buffer, 0) -
                     (svt_aom_sad8x8(recon + i * recon_stride + j, recon_stride, zero_buffer, 0) >> 2);
                 total_nrg += abs(input_nrg - recon_nrg);
             }
@@ -145,9 +145,9 @@ uint64_t svt_psy_distortion(const uint8_t* input, const uint32_t input_stride,
  * 10-bit functions
  */
 static uint64_t svt_psy_sa8d_8x8_hbd(const uint16_t* s, const uint32_t sp, const uint16_t* r, const uint32_t rp) {
-    uint64_t tmp[8][4];
-    uint64_t a0, a1, a2, a3, a4, a5, a6, a7, b0, b1, b2, b3;
-    uint64_t sum = 0;
+    uint32x2_t tmp[8][4];
+    uint32x2_t a0, a1, a2, a3, a4, a5, a6, a7, b0, b1, b2, b3;
+    uint32x2_t sum = 0;
 
     for (int i = 0; i < 8; i++, s += sp, r += rp) {
         a0 = s[0] - r[0];
@@ -178,9 +178,9 @@ static uint64_t svt_psy_sa8d_8x8_hbd(const uint16_t* s, const uint32_t sp, const
 }
 
 static uint64_t svt_psy_satd_4x4_hbd(const uint16_t* s, const uint32_t sp, const uint16_t* r, const uint32_t rp) {
-    uint64_t tmp[4][2];
-    uint64_t a0, a1, a2, a3, b0, b1;
-    uint64_t sum = 0;
+    uint32x2_t tmp[4][2];
+    uint32x2_t a0, a1, a2, a3, b0, b1;
+    uint32x2_t sum = 0;
 
     for (int i = 0; i < 4; i++, s += sp, r += rp) {
         a0 = s[0] - r[0];
@@ -206,7 +206,6 @@ uint64_t svt_psy_distortion_hbd(uint16_t* input, const uint32_t input_stride,
                                 const uint32_t width, const uint32_t height) {
 
     static uint16_t zero_buffer[8] = { 0 };
-
     uint64_t total_nrg = 0;
 
     if (width >= 8 && height >= 8) { /* >8x8 */
