@@ -15,100 +15,49 @@
 #include <stdbool.h>
 #include "ac_bias.h"
 #include "aom_dsp_rtcd.h"
-
-#define BITS_PER_SUM 16
-#define BITS_PER_SUM_HBD 32
-
-// in: a pseudo-simd number of the form x+(y<<EW)
-// return: abs(x)+(abs(y)<<16)
-static inline uint16x2_t abs2(const uint16x2_t a) {
-    const uint16x2_t mask = (a >> (BITS_PER_SUM - 1)) & (((uint16x2_t)1 << BITS_PER_SUM) + 1);
-    const uint16x2_t s = (mask << BITS_PER_SUM) - mask;
-    return (a + s) ^ s;
-}
-
-static inline uint32x2_t abs2_hbd(const uint32x2_t a) {
-    const uint32x2_t mask = (a >> (BITS_PER_SUM_HBD - 1)) & (((uint32x2_t)1 << BITS_PER_SUM_HBD) + 1);
-    const uint32x2_t s = (mask << BITS_PER_SUM_HBD) - mask;
-    return (a + s) ^ s;
-}
-
-static void svt_psy_hadamard_4x4_diff_c(uint32_t* a, uint32_t* b, uint32_t* c, uint32_t* d, uint32_t w, uint32_t x, uint32_t y, uint32_t z) {
-    const uint16x2_t s0 = w, s1 = x, s2 = y, s3 = z;
-    const uint16x2_t t0 = s0 + s1, t1 = s0 - s1, t2 = s2 + s3, t3 = s2 - s3;
-    *a = t0 + t2;
-    *b = t0 - t2;
-    *c = t1 + t3;
-    *d = t1 - t3;
-}
-
-static void svt_psy_hadamard_4x4_hbd_diff_c(uint64_t* a, uint64_t* b, uint64_t* c, uint64_t* d, uint64_t w, uint64_t x, uint64_t y, uint64_t z) {
-    const uint64_t s0 = w, s1 = x, s2 = y, s3 = z;
-    const uint64_t t0 = s0 + s1, t1 = s0 - s1, t2 = s2 + s3, t3 = s2 - s3;
-    *a = t0 + t2;
-    *b = t0 - t2;
-    *c = t1 + t3;
-    *d = t1 - t3;
-}
+#include "common_dsp_rtcd.h"
 
 /*
  * 8-bit functions
  */
 static uint64_t svt_psy_sa8d_8x8(const uint8_t* s, const uint32_t sp, const uint8_t* r, const uint32_t rp) {
-    uint16x2_t tmp[8][4];
-    uint16x2_t a0, a1, a2, a3, a4, a5, a6, a7, b0, b1, b2, b3;
-    uint16x2_t sum = 0;
+    int16_t diff[64];
+    int32_t coeff[64];
+    uint64_t sum = 0;
 
-    for (int i = 0; i < 8; i++, s += sp, r += rp) {
-        a0 = s[0] - r[0];
-        a1 = s[1] - r[1];
-        b0 = (a0 + a1) + ((a0 - a1) << BITS_PER_SUM);
-        a2 = s[2] - r[2];
-        a3 = s[3] - r[3];
-        b1 = (a2 + a3) + ((a2 - a3) << BITS_PER_SUM);
-        a4 = s[4] - r[4];
-        a5 = s[5] - r[5];
-        b2 = (a4 + a5) + ((a4 - a5) << BITS_PER_SUM);
-        a6 = s[6] - r[6];
-        a7 = s[7] - r[7];
-        b3 = (a6 + a7) + ((a6 - a7) << BITS_PER_SUM);
-        svt_psy_hadamard_4x4_diff_c(&tmp[i][0], &tmp[i][1], &tmp[i][2], &tmp[i][3], b0, b1, b2, b3);
-    }
-    for (int i = 0; i < 4; i++) {
-        svt_psy_hadamard_4x4_diff_c(&a0, &a1, &a2, &a3, tmp[0][i], tmp[1][i], tmp[2][i], tmp[3][i]);
-        svt_psy_hadamard_4x4_diff_c(&a4, &a5, &a6, &a7, tmp[4][i], tmp[5][i], tmp[6][i], tmp[7][i]);
-        b0  = abs2(a0 + a4) + abs2(a0 - a4);
-        b0 += abs2(a1 + a5) + abs2(a1 - a5);
-        b0 += abs2(a2 + a6) + abs2(a2 - a6);
-        b0 += abs2(a3 + a7) + abs2(a3 - a7);
-        sum += (uint16_t)b0 + (b0 >> BITS_PER_SUM);
+    for (int i = 0; i < 64; i += 8) {
+        const uint8_t *s_row = s + i * sp;
+        const uint8_t *r_row = r + i * rp;
+        for (int j = 0; j < 8; j++)
+            diff[i + j] = s_row[j] - r_row[j];
     }
 
-    return (uint64_t)((sum + 2) >> 2);
+    svt_aom_hadamard_8x8(diff, 8, coeff);
+
+    for (int i = 0; i < 64; i++)
+        sum += abs(coeff[i]);
+
+    return (sum + 2) >> 2;
 }
 
 static uint64_t svt_psy_satd_4x4(const uint8_t* s, const uint32_t sp, const uint8_t* r, const uint32_t rp) {
-    uint16x2_t tmp[4][2];
-    uint16x2_t a0, a1, a2, a3, b0, b1;
-    uint16x2_t sum = 0;
+    int16_t diff[16];
+    int32_t coeff[16];
+    uint64_t sum = 0;
 
-    for (int i = 0; i < 4; i++, s += sp, r += rp) {
-        a0 = s[0] - r[0];
-        a1 = s[1] - r[1];
-        b0 = (a0 + a1) + ((a0 - a1) << BITS_PER_SUM);
-        a2 = s[2] - r[2];
-        a3 = s[3] - r[3];
-        b1 = (a2 + a3) + ((a2 - a3) << BITS_PER_SUM);
-        tmp[i][0] = b0 + b1;
-        tmp[i][1] = b0 - b1;
-    }
-    for (int i = 0; i < 2; i++) {
-        svt_psy_hadamard_4x4_diff_c(&a0, &a1, &a2, &a3, tmp[0][i], tmp[1][i], tmp[2][i], tmp[3][i]);
-        a0 = abs2(a0) + abs2(a1) + abs2(a2) + abs2(a3);
-        sum += ((uint16_t)a0) + (a0 >> BITS_PER_SUM);
+    for (int i = 0; i < 16; i += 4) {
+        const uint8_t *s_row = s + i * sp;
+        const uint8_t *r_row = r + i * rp;
+        for (int j = 0; j < 4; j++)
+            diff[i + j] = s_row[j] - r_row[j];
     }
 
-    return (uint64_t)(sum >> 1);
+    svt_aom_hadamard_4x4(diff, 4, coeff);
+
+    for (int i = 0; i < 16; i++)
+        sum += abs(coeff[i]);
+
+    return sum >> 1;
 }
 
 uint64_t svt_psy_distortion(const uint8_t* input, const uint32_t input_stride,
@@ -145,58 +94,41 @@ uint64_t svt_psy_distortion(const uint8_t* input, const uint32_t input_stride,
  * 10-bit functions
  */
 static uint64_t svt_psy_sa8d_8x8_hbd(const uint16_t* s, const uint32_t sp, const uint16_t* r, const uint32_t rp) {
-    uint32x2_t tmp[8][4];
-    uint32x2_t a0, a1, a2, a3, a4, a5, a6, a7, b0, b1, b2, b3;
-    uint32x2_t sum = 0;
+    int16_t diff[64];
+    int32_t coeff[64];
+    uint64_t sum = 0;
 
-    for (int i = 0; i < 8; i++, s += sp, r += rp) {
-        a0 = s[0] - r[0];
-        a1 = s[1] - r[1];
-        b0 = (a0 + a1) + ((a0 - a1) << BITS_PER_SUM_HBD);
-        a2 = s[2] - r[2];
-        a3 = s[3] - r[3];
-        b1 = (a2 + a3) + ((a2 - a3) << BITS_PER_SUM_HBD);
-        a4 = s[4] - r[4];
-        a5 = s[5] - r[5];
-        b2 = (a4 + a5) + ((a4 - a5) << BITS_PER_SUM_HBD);
-        a6 = s[6] - r[6];
-        a7 = s[7] - r[7];
-        b3 = (a6 + a7) + ((a6 - a7) << BITS_PER_SUM_HBD);
-        svt_psy_hadamard_4x4_hbd_diff_c(&tmp[i][0], &tmp[i][1], &tmp[i][2], &tmp[i][3], b0, b1, b2, b3);
+    for (int i = 0; i < 64; i += 8) {
+        const uint16_t *s_row = s + i * sp;
+        const uint16_t *r_row = r + i * rp;
+        for (int j = 0; j < 8; j++)
+            diff[i + j] = (int16_t)(s_row[j] - r_row[j]);
     }
-    for (int i = 0; i < 4; i++) {
-        svt_psy_hadamard_4x4_hbd_diff_c(&a0, &a1, &a2, &a3, tmp[0][i], tmp[1][i], tmp[2][i], tmp[3][i]);
-        svt_psy_hadamard_4x4_hbd_diff_c(&a4, &a5, &a6, &a7, tmp[4][i], tmp[5][i], tmp[6][i], tmp[7][i]);
-        b0  = abs2_hbd(a0 + a4) + abs2_hbd(a0 - a4);
-        b0 += abs2_hbd(a1 + a5) + abs2_hbd(a1 - a5);
-        b0 += abs2_hbd(a2 + a6) + abs2_hbd(a2 - a6);
-        b0 += abs2_hbd(a3 + a7) + abs2_hbd(a3 - a7);
-        sum += (uint32_t)b0 + (b0 >> BITS_PER_SUM_HBD);
-    }
+
+    svt_aom_hadamard_8x8(diff, 8, coeff);
+
+    for (int i = 0; i < 64; i++)
+        sum += abs(coeff[i]);
 
     return (sum + 2) >> 2;
 }
 
 static uint64_t svt_psy_satd_4x4_hbd(const uint16_t* s, const uint32_t sp, const uint16_t* r, const uint32_t rp) {
-    uint32x2_t tmp[4][2];
-    uint32x2_t a0, a1, a2, a3, b0, b1;
-    uint32x2_t sum = 0;
+    int16_t diff[16];
+    int32_t coeff[16];
+    uint64_t sum = 0;
 
-    for (int i = 0; i < 4; i++, s += sp, r += rp) {
-        a0 = s[0] - r[0];
-        a1 = s[1] - r[1];
-        b0 = (a0 + a1) + ((a0 - a1) << BITS_PER_SUM_HBD);
-        a2 = s[2] - r[2];
-        a3 = s[3] - r[3];
-        b1 = (a2 + a3) + ((a2 - a3) << BITS_PER_SUM_HBD);
-        tmp[i][0] = b0 + b1;
-        tmp[i][1] = b0 - b1;
+    for (int i = 0; i < 16; i += 4) {
+        const uint16_t *s_row = s + i * sp;
+        const uint16_t *r_row = r + i * rp;
+        for (int j = 0; j < 4; j++)
+            diff[i + j] = (int16_t)(s_row[j] - r_row[j]);
     }
-    for (int i = 0; i < 2; i++) {
-        svt_psy_hadamard_4x4_hbd_diff_c(&a0, &a1, &a2, &a3, tmp[0][i], tmp[1][i], tmp[2][i], tmp[3][i]);
-        a0 = abs2_hbd(a0) + abs2_hbd(a1) + abs2_hbd(a2) + abs2_hbd(a3);
-        sum += ((uint32_t)a0) + (a0 >> BITS_PER_SUM_HBD);
-    }
+
+    svt_aom_hadamard_4x4(diff, 4, coeff);
+
+    for (int i = 0; i < 16; i++)
+        sum += abs(coeff[i]);
 
     return sum >> 1;
 }
